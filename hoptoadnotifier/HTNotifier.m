@@ -42,7 +42,7 @@ NSString *HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 
 // methods to be implemented
 - (id)initWithAPIKey:(NSString *)key environmentName:(NSString *)name;
-- (void)checkForNoticesAndReportIfReachable;
+// - (void)checkForNoticesAndReportIfReachable;
 - (void)postAllNoticesWithAutoreleasePool;
 - (void)postNoticesWithPaths:(NSArray *)paths;
 - (void)postNoticeWithPath:(NSString *)path;
@@ -92,25 +92,6 @@ NSString *HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 		
 	}
 	return self;
-}
-- (void)checkForNoticesAndReportIfReachable {
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-	
-	if ([self isHoptoadReachable]) {
-		[self performSelectorOnMainThread:@selector(unregisterNotifications) withObject:nil waitUntilDone:YES];
-		
-		NSArray *notices = HTNotices();
-		if ([notices count] > 0) {
-			if ([[NSUserDefaults standardUserDefaults] boolForKey:HTNotifierAlwaysSendKey]) {
-				[self postNoticesWithPaths:notices];
-			}
-			else {
-				[self performSelectorOnMainThread:@selector(showNoticeAlert) withObject:nil waitUntilDone:YES];
-			}
-		}
-	}
-    	
-	[pool drain];
 }
 - (void)postAllNoticesWithAutoreleasePool {
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -321,6 +302,26 @@ NSString *HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 	@catch (NSException * e) { ht_handle_exception(e); }
 	NSString *noticePath = [NSString stringWithUTF8String:ht_notice_info.notice_path];
 	[[NSFileManager defaultManager] moveItemAtPath:noticePath toPath:testPath error:nil];
+}
+
+- (void)checkForNoticesAndReportIfReachable {
+	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	
+	if ([self isHoptoadReachable]) {
+		[self performSelectorOnMainThread:@selector(unregisterNotifications) withObject:nil waitUntilDone:YES];
+		
+		NSArray *notices = HTNotices();
+		if ([notices count] > 0) {
+			if ([[NSUserDefaults standardUserDefaults] boolForKey:HTNotifierAlwaysSendKey]) {
+				[self postNoticesWithPaths:notices];
+			}
+			else {
+				[self performSelectorOnMainThread:@selector(showNoticeAlert) withObject:nil waitUntilDone:YES];
+			}
+		}
+	}
+	
+	[pool drain];
 }
 
 @end

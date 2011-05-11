@@ -116,4 +116,6 @@ extern NSString *HTNotifierReleaseEnvironment;
  */
 - (void)writeTestNotice;
 
+- (void)checkForNoticesAndReportIfReachable;
+
 @end
