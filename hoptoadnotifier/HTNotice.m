@@ -28,7 +28,6 @@
 #import "HTNotice.h"
 #import "HTNotifier.h"
 #import "HTFunctions.h"
-#import "IosPreference.h"
 
 #import "DDXML.h"
 
@@ -82,17 +81,7 @@ int HTExceptionNoticeType = 2;
 		[info setObject:[NSString stringWithUTF8String:value_str] forKey:@"Operating System"];
 		free(value_str);
 	}
-	
-	// Stuff from IosPreference
-	if ([[[IosPreference get] username] length] > 0) {
-		[info setObject:[[IosPreference get] username] forKey:@"Coach Username"];
-		[info setObject:[NSString stringWithFormat:@"%i", [[IosPreference get] version]] forKey:@"Database Version"];
-	}
-	
-	// Build Number
-	[info setObject:[[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBuildNumber"]
-			 forKey:@"Build Number"];
-
+    
     // platform
     [data getBytes:&length range:NSMakeRange(location, sizeof(unsigned long))];
     location += sizeof(unsigned long);
@@ -103,7 +92,7 @@ int HTExceptionNoticeType = 2;
 		[info setObject:[NSString stringWithUTF8String:value_str] forKey:@"Device"];
 		free(value_str);
 	}
-	
+    
     // app version
     [data getBytes:&length range:NSMakeRange(location, sizeof(unsigned long))];
     location += sizeof(unsigned long);
