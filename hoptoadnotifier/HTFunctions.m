@@ -1,22 +1,39 @@
-//
-//  HTHandler.m
-//  CrashPhone
-//
-//  Created by Caleb Davenport on 12/15/10.
-//  Copyright 2010 GUI Cocoa, LLC. All rights reserved.
-//
+/*
+ 
+ Copyright (C) 2011 GUI Cocoa, LLC.
+ 
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ 
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ 
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.
+ 
+ */
 
 #import <execinfo.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <sys/sysctl.h>
-#import <TargetConditionals.h>
+
+#import "RegexKitLite.h"
 
 #import "HTFunctions.h"
 #import "HTNotifier.h"
 #import "HTNotice.h"
 
-static NSString * const HTNotifierDirectoryName = @"Hoptoad Notices";
+NSString *HTNotifierDirectoryName = @"Hoptoad Notices";
 
 // handled signals
 int ht_signals_count = 6;
@@ -42,6 +59,10 @@ void ht_handle_signal(int signal, siginfo_t *info, void *context) {
 		
 		// signal
         write(fd, &signal, sizeof(int));
+        
+        // environment info
+        write(fd, &ht_notice_info.env_info_len, sizeof(unsigned long));
+        write(fd, ht_notice_info.env_info, ht_notice_info.env_info_len);
 		
 		// backtraces
 		int count = 128;
@@ -84,6 +105,7 @@ void ht_handle_exception(NSException *exception) {
 #endif
 		
 		// environment info
+        [[HTNotifier sharedNotifier] setEnvironmentValue:[[exception userInfo] description] forKey:@"Exception"];
 		NSDictionary *environmentInfo = [[HTNotifier sharedNotifier] environmentInfo];
 		[dictionary setObject:environmentInfo forKey:@"environment info"];
 		
@@ -95,6 +117,7 @@ void ht_handle_exception(NSException *exception) {
         
         // close file
         close(fd);
+        
     }
 	id<HTNotifierDelegate> delegate = [[HTNotifier sharedNotifier] delegate];
 	if ([delegate respondsToSelector:@selector(notifierDidHandleException:)]) {
@@ -122,9 +145,9 @@ int ht_open_file(int type) {
         if (ht_notice_info.env_name_len > 0) {
             write(fd, ht_notice_info.env_name, ht_notice_info.env_name_len);
         }
-        write(fd, &ht_notice_info.git_hash_len, sizeof(unsigned long));
-        if (ht_notice_info.git_hash_len > 0) {
-            write(fd, ht_notice_info.git_hash, ht_notice_info.git_hash_len);
+        write(fd, &ht_notice_info.bundle_version_len, sizeof(unsigned long));
+        if (ht_notice_info.bundle_version_len > 0) {
+            write(fd, ht_notice_info.bundle_version, ht_notice_info.bundle_version_len);
         }
     }
     return fd;
@@ -171,11 +194,11 @@ void HTStopSignalHandler() {
 id HTInfoPlistValueForKey(NSString *key) {
 	return [[[NSBundle mainBundle] infoDictionary] objectForKey:key];
 }
-NSString * HTExecutableName() {
+NSString *HTExecutableName() {
 	return HTInfoPlistValueForKey(@"CFBundleExecutable");
 }
-NSString * HTApplicationVersion() {
-	NSString *bundleVersion = HTInfoPlistValueForKey(@"CFBundleVersion");
+NSString *HTApplicationVersion() {
+	NSString *bundleVersion = HTBundleVersion();
 	NSString *versionString = HTInfoPlistValueForKey(@"CFBundleShortVersionString");
 	if (bundleVersion != nil && versionString != nil) {
 		return [NSString stringWithFormat:@"%@ (%@)", versionString, bundleVersion];
@@ -184,7 +207,10 @@ NSString * HTApplicationVersion() {
 	else if (versionString != nil) { return versionString; }
 	else { return nil; }
 }
-NSString * HTApplicationName() {
+NSString *HTBundleVersion() {
+    return HTInfoPlistValueForKey(@"CFBundleVersion");
+}
+NSString *HTApplicationName() {
 	NSString *displayName = HTInfoPlistValueForKey(@"CFBundleDisplayName");
 	NSString *bundleName = HTInfoPlistValueForKey(@"CFBundleName");
 	NSString *identifier = HTInfoPlistValueForKey(@"CFBundleIdentifier");
@@ -195,14 +221,14 @@ NSString * HTApplicationName() {
 }
 
 #pragma mark - platform accessors
-NSString * HTOperatingSystemVersion() {
+NSString *HTOperatingSystemVersion() {
 #if TARGET_IPHONE_SIMULATOR
 	return [[UIDevice currentDevice] systemVersion];
 #else
 	return [[NSProcessInfo processInfo] operatingSystemVersionString];
 #endif
 }
-NSString * HTMachine() {
+NSString *HTMachine() {
 #if TARGET_IPHONE_SIMULATOR
 	return @"iPhone Simulator";
 #else
@@ -220,7 +246,7 @@ NSString * HTMachine() {
     
 #endif
 }
-NSString * HTPlatform() {
+NSString *HTPlatform() {
 #if TARGET_IPHONE_SIMULATOR
 	return @"iPhone Simulator";
 #else
@@ -313,15 +339,15 @@ void HTInitNoticeInfo() {
         memcpy((void *)ht_notice_info.env_name, value_str, length);
     }
     
-    // git hash
-    value = HTInfoPlistValueForKey(@"GCGitCommitHash");
-    if (value == nil) { HTLog(@"unable to cache git commit hash"); }
+    // bundle version
+    value = HTInfoPlistValueForKey(@"CFBundleVersion");
+    if (value == nil) { HTLog(@"unable to cache bundle version"); }
     else {
         value_str = [value UTF8String];
         length = (strlen(value_str) + 1);
-        ht_notice_info.git_hash = malloc(length);
-        ht_notice_info.git_hash_len = length;
-        memcpy((void *)ht_notice_info.git_hash, value_str, length);
+        ht_notice_info.bundle_version = malloc(length);
+        ht_notice_info.bundle_version_len = length;
+        memcpy((void *)ht_notice_info.bundle_version, value_str, length);
     }
     
 }
@@ -340,9 +366,12 @@ void HTReleaseNoticeInfo() {
     free((void *)ht_notice_info.env_name);
     ht_notice_info.env_name = NULL;
     ht_notice_info.env_name_len = 0;
-    free((void *)ht_notice_info.git_hash);
-    ht_notice_info.git_hash = NULL;
-    ht_notice_info.git_hash_len = 0;
+    free((void *)ht_notice_info.bundle_version);
+    ht_notice_info.bundle_version = NULL;
+    ht_notice_info.bundle_version_len = 0;
+    free(ht_notice_info.env_info);
+    ht_notice_info.env_info = NULL;
+    ht_notice_info.env_info_len = 0;
 }
 
 #pragma mark - notice information on disk
@@ -375,13 +404,13 @@ NSArray * HTNotices() {
 }
 
 #pragma mark - callstack functions
-NSArray * HTCallStackSymbolsFromReturnAddresses(NSArray *addresses) {
-	int frames = [addresses count];
+NSArray *HTCallStackSymbolsFromReturnAddresses(NSArray *addresses) {
+	NSUInteger frames = [addresses count];
 	void *stack[frames];
 	for (NSInteger i = 0; i < frames; i++) {
 		stack[i] = (void *)[[addresses objectAtIndex:i] unsignedIntegerValue];
 	}
-	char **strs = backtrace_symbols(stack, frames);
+	char **strs = backtrace_symbols(stack, (int)frames);
 	NSMutableArray *backtrace = [NSMutableArray arrayWithCapacity:frames];
 	for (NSInteger i = 0; i < frames; i++) {
 		NSString *entry = [NSString stringWithUTF8String:strs[i]];
@@ -390,51 +419,32 @@ NSArray * HTCallStackSymbolsFromReturnAddresses(NSArray *addresses) {
 	free(strs);
 	return backtrace;
 }
-NSArray * HTParseCallstack(NSArray *symbols) {
-	NSCharacterSet *whiteSpace = [NSCharacterSet whitespaceAndNewlineCharacterSet];
-	NSCharacterSet *nonWhiteSpace = [whiteSpace invertedSet];
-	NSMutableArray *parsed = [NSMutableArray arrayWithCapacity:[symbols count]];
-	for (NSString *line in symbols) {
-		
-		// create scanner
-		NSScanner *scanner = [NSScanner scannerWithString:line];
-		
-		// line number
-		NSInteger number;
-		[scanner scanInteger:&number];
-		
-		// binary name
-		NSString *binary;
-		[scanner scanCharactersFromSet:nonWhiteSpace intoString:&binary];
-		
-		// method
-        NSUInteger location = [scanner scanLocation];
-		NSString *method = [line substringFromIndex:location];
-		method = [method stringByTrimmingCharactersInSet:whiteSpace];
-		
-		// add line
-		[parsed addObject:
-		 [NSDictionary dictionaryWithObjectsAndKeys:
-		  [NSNumber numberWithInteger:number], @"number",
-		  binary, @"file",
-		  method, @"method",
-		  nil]];
-		
-	}
-	return parsed;
+NSArray *HTParseCallstack(NSArray *symbols) {
+    NSMutableArray *parsed = [NSMutableArray arrayWithCapacity:[symbols count]];
+    NSString *pattern = @"([0-9]+)[:blank:]*(.*)(0x[0-9a-f]{8}.*)";
+    NSCharacterSet *blank = [NSCharacterSet whitespaceCharacterSet];
+    for (NSString *line in symbols) {
+        NSArray *components = [line captureComponentsMatchedByRegex:pattern];
+        NSMutableArray *frame = [[NSMutableArray alloc] initWithCapacity:3];
+        for (NSInteger i = 1; i < [components count]; i++) {
+            NSString *item = [[components objectAtIndex:i] stringByTrimmingCharactersInSet:blank];
+            [frame addObject:item];
+        }
+        [parsed addObject:frame];
+        [frame release];
+    }
+    return parsed;
 }
-NSString * HTActionFromCallstack(NSArray *callStack) {
-	NSPredicate *predicate = [NSPredicate predicateWithFormat:@"file matches %@", HTExecutableName()];
-	NSArray *matching = [[callStack filteredArrayUsingPredicate:predicate] valueForKey:@"method"];
-	for (NSString *file in matching) {
-		if ([file rangeOfString:@"ht_handle_signal"].location == NSNotFound) {
-			return file;
-		}
-		else {
-			continue;
-		}
-	}
-	return @"";
+NSString *HTActionFromParsedCallstack(NSArray *callStack) {
+    NSString *executable = HTExecutableName();
+    for (NSArray *line in callStack) {
+        NSString *binary = [line objectAtIndex:1];
+        NSString *method = [line objectAtIndex:2];
+        if ([binary isEqualToString:executable] && [method rangeOfString:@"ht_handle_signal"].location == NSNotFound) {
+            return method;
+        }
+    }
+    return nil;
 }
 
 #pragma mark - string substitution
