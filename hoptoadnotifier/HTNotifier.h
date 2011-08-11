@@ -28,17 +28,14 @@
 #elif TARGET_OS_MAC
 #import <Cocoa/Cocoa.h>
 #else
-#error [Hoptoad] unsupported platform
+#error [Airbrake] unsupported platform
 #endif
 #import <SystemConfiguration/SystemConfiguration.h>
 
 #import "HTNotifierDelegate.h"
 
 // notifier version
-extern NSString * const HTNotifierVersion;
-
-// internal
-extern NSString * const HTNotifierAlwaysSendKey;
+extern NSString *HTNotifierVersion;
 
 /*
  
@@ -46,8 +43,8 @@ extern NSString * const HTNotifierAlwaysSendKey;
  body to have their values substituted at runtime.
  
  */
-extern NSString * const HTNotifierBundleName;      // app name
-extern NSString * const HTNotifierBundleVersion;   // bundle version
+extern NSString *HTNotifierBundleName;      // app name
+extern NSString *HTNotifierBundleVersion;   // bundle version
 
 /*
  
@@ -56,11 +53,11 @@ extern NSString * const HTNotifierBundleVersion;   // bundle version
  set development or release depending on the DEBUG flag.
  
  */
-extern NSString * const HTNotifierDevelopmentEnvironment;
-extern NSString * const HTNotifierAdHocEnvironment;
-extern NSString * const HTNotifierAppStoreEnvironment;
-extern NSString * const HTNotifierReleaseEnvironment;
-extern NSString * const HTNotifierAutomaticEnvironment;
+extern NSString *HTNotifierDevelopmentEnvironment;
+extern NSString *HTNotifierAdHocEnvironment;
+extern NSString *HTNotifierAppStoreEnvironment;
+extern NSString *HTNotifierReleaseEnvironment;
+extern NSString *HTNotifierAutomaticEnvironment;
 
 /*
  
@@ -78,18 +75,18 @@ extern NSString * const HTNotifierAutomaticEnvironment;
 @interface HTNotifier : NSObject {
 #endif
 @private
-    NSMutableDictionary *_environmentInfo;
-    NSString *_environmentName;
-    NSString *_apiKey;
-	NSObject<HTNotifierDelegate> *_delegate;
-    BOOL _useSSL;
-	SCNetworkReachabilityRef reachability;
+    NSMutableDictionary             * __environmentInfo;
+    NSString                        * __environmentName;
+    NSString                        * __apiKey;
+	NSObject<HTNotifierDelegate>    * __delegate;
+    BOOL                            __useSSL;
+	SCNetworkReachabilityRef        reachability;
 }
 
 // properties
 @property (nonatomic, readonly) NSDictionary *environmentInfo;
-@property (nonatomic, readonly) NSString *apiKey;
-@property (nonatomic, readonly) NSString *environmentName;
+@property (nonatomic, readonly, copy) NSString *apiKey;
+@property (nonatomic, readonly, copy) NSString *environmentName;
 @property (nonatomic, assign) NSObject<HTNotifierDelegate> *delegate;
 
 /*
@@ -114,8 +111,11 @@ extern NSString * const HTNotifierAutomaticEnvironment;
  include any of the above constant strings in the
  enviromnent name to have the value replaced by the library
  
+ returns the shared notifier object for convenience or
+ nil if it could not be created
+ 
  */
-+ (void)startNotifierWithAPIKey:(NSString *)key environmentName:(NSString *)name;
++ (HTNotifier *)startNotifierWithAPIKey:(NSString *)key environmentName:(NSString *)name;
 
 /*
  
@@ -129,11 +129,10 @@ extern NSString * const HTNotifierAutomaticEnvironment;
 
 /*
  
- writes a test notice if one does not exist already. it
- will be reported just as an actual crash.
+ log an exception in a new notice file
  
  */
-- (void)writeTestNotice;
+- (void)logException:(NSException *)exception;
 
 /*
  
@@ -149,6 +148,14 @@ extern NSString * const HTNotifierAutomaticEnvironment;
  
  */
 - (NSString *)environmentValueForKey:(NSString *)key;
+    
+/*
+ 
+ writes a test notice if one does not exist already. it
+ will be reported just as an actual crash.
+ 
+ */
+- (void)writeTestNotice;
 
 /*
  
@@ -156,6 +163,11 @@ extern NSString * const HTNotifierAutomaticEnvironment;
  if the user has chosen to always send notices they will
  be posted imediately, otherwise the user will be asked
  for their preference.
+ 
+ this method is asynchronous and simply spawns the post
+ action on a new thread, if airbrake is reachable
+ 
+ returns true if notices will be posted
  
  */
 - (BOOL)postNotices;

@@ -27,9 +27,9 @@
 #import "HTFunctions.h"
 
 // internal
-void ht_handle_exception(NSException *);
 static HTNotifier *sharedNotifier = nil;
-static NSString *HTNotifierHostName = @"hoptoadapp.com";
+static NSString *HTNotifierHostName = @"airbrakeapp.com";
+static NSString *HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 #define HTNotifierURL [NSURL URLWithString: \
 	[NSString stringWithFormat: \
 	@"%@://%@/notifier_api/v2/notices", \
@@ -41,15 +41,19 @@ static NSString *HTNotifierHostName = @"hoptoadapp.com";
 #define HT_IOS_SDK_4 (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED >= 4000)
 
 // extern strings
-NSString * const HTNotifierVersion = @"2.2.2";
-NSString * const HTNotifierBundleName = @"${BUNDLE}";
-NSString * const HTNotifierBundleVersion  = @"${VERSION}";
-NSString * const HTNotifierDevelopmentEnvironment = @"Development";
-NSString * const HTNotifierAdHocEnvironment = @"Ad Hoc";
-NSString * const HTNotifierAppStoreEnvironment = @"App Store";
-NSString * const HTNotifierReleaseEnvironment = @"Release";
-NSString * const HTNotifierAutomaticEnvironment = @"${AUTOMATIC}";
-NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
+NSString *HTNotifierVersion                 = @"2.3";
+NSString *HTNotifierBundleName              = @"${BUNDLE}";
+NSString *HTNotifierBundleVersion           = @"${VERSION}";
+NSString *HTNotifierDevelopmentEnvironment  = @"Development";
+NSString *HTNotifierAdHocEnvironment        = @"Ad Hoc";
+NSString *HTNotifierAppStoreEnvironment     = @"App Store";
+NSString *HTNotifierReleaseEnvironment      = @"Release";
+NSString *HTNotifierAutomaticEnvironment    = @"${AUTOMATIC}";
+
+@interface HTNotifier ()
+@property (nonatomic, readwrite, copy) NSString *apiKey;
+@property (nonatomic, readwrite, copy) NSString *environmentName;
+@end
 
 #pragma mark - private methods
 @interface HTNotifier (private)
@@ -79,7 +83,7 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 	if (self) {
 		
 		// create folder
-		NSString *directory = HTNoticesDirectory();
+		NSString *directory = ABNotifierPathForNoticesDirectory();
 		if (![[NSFileManager defaultManager] fileExistsAtPath:directory]) {
 			[[NSFileManager defaultManager]
 			 createDirectoryAtPath:directory
@@ -89,10 +93,10 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 		}
 		
 		// setup values
-		_apiKey = [key copy];
-		_environmentName = [name copy];
-		_environmentInfo = [[NSMutableDictionary alloc] init];
-		self.useSSL = NO;
+        self.apiKey = key;
+        self.environmentName = name;
+        self.useSSL = NO;
+		__environmentInfo = [[NSMutableDictionary alloc] init];
 #if TARGET_OS_IPHONE && defined(DEBUG)
         NSString *UDID = [[UIDevice currentDevice] uniqueIdentifier];
         [self
@@ -118,6 +122,9 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 	return self;
 }
 - (void)postNoticesWithPaths:(NSArray *)paths {
+    
+    // pool
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     
     // notify delegate
     if ([paths count] && [self.delegate respondsToSelector:@selector(notifierWillPostNotices)]) {
@@ -172,12 +179,12 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
          withObject:nil
          waitUntilDone:YES];
     }
+    
+    // pool
+    [pool drain];
 	
 }
 - (void)postNoticeWithPath:(NSString *)path {
-    
-    // pool
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     
     // create url request
 	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:HTNotifierURL];
@@ -186,27 +193,17 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 	[request setHTTPMethod:@"POST"];
     
 	// get notice payload
-    @try {
-        HTNotice *notice = [HTNotice noticeWithContentsOfFile:path];
-        NSData *data = [notice hoptoadXMLData];
-        if (data == nil) {
-            [NSException
-             raise:NSInternalInconsistencyException
-             format:@"[Hoptoad] unable to read notice at %@", path];
-        }
-        else {
-            [request setHTTPBody:data];
-#ifdef DEBUG
-            HTLog(@"%@", notice);
-#endif
-        }
-
-    }
-    @catch (NSException *exception) {
-        HTLog(@"%@", exception);
+    HTNotice *notice = [HTNotice noticeWithContentsOfFile:path];
+    NSData *data = [notice hoptoadXMLData];
+    if (!data) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
-        [pool drain];
         return;
+    }
+    else {
+        [request setHTTPBody:data];
+#ifdef DEBUG
+        HTLog(@"%@", notice);
+#endif
     }
 	
 	// perform request
@@ -234,14 +231,12 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 		HTLog(@"unexpected response\nstatus code:%ld", (long)statusCode);
 	}
 	else {
-		NSString *responseString = [[NSString alloc] initWithData:responseBody
-														 encoding:NSUTF8StringEncoding];
+		NSString *responseString = [[NSString alloc]
+                                    initWithData:responseBody
+                                    encoding:NSUTF8StringEncoding];
 		HTLog(@"unexpected response\nstatus code:%ld\nresponse body:%@", (long)statusCode, responseString);
 		[responseString release];
 	}
-    
-    // pool
-    [pool drain];
     
 }
 - (BOOL)isHoptoadReachable {
@@ -321,11 +316,12 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 #else
 	
     // build alert
-	NSAlert *alert = [NSAlert alertWithMessageText:HTStringByReplacingHoptoadVariablesInString(title)
-									 defaultButton:HTLocalizedString(@"ALWAYS_SEND")
-								   alternateButton:HTLocalizedString(@"DONT_SEND")
-									   otherButton:HTLocalizedString(@"SEND")
-						 informativeTextWithFormat:HTStringByReplacingHoptoadVariablesInString(body)];
+	NSAlert *alert = [NSAlert
+                      alertWithMessageText:HTStringByReplacingHoptoadVariablesInString(title)
+                      defaultButton:HTLocalizedString(@"ALWAYS_SEND")
+                      alternateButton:HTLocalizedString(@"DONT_SEND")
+                      otherButton:HTLocalizedString(@"SEND")
+                      informativeTextWithFormat:HTStringByReplacingHoptoadVariablesInString(body)];
     
     // run alert
 	NSInteger code = [alert runModal];
@@ -362,24 +358,24 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 #pragma mark - public methods
 @implementation HTNotifier
 
-@synthesize environmentInfo=_environmentInfo;
-@synthesize environmentName=_environmentName;
-@synthesize apiKey=_apiKey;
-@synthesize useSSL=_useSSL;
-@synthesize delegate=_delegate;
+@synthesize environmentInfo = __environmentInfo;
+@synthesize environmentName = __environmentName;
+@synthesize apiKey          = __apiKey;
+@synthesize useSSL          = __useSSL;
+@synthesize delegate        = __delegate;
 
 #pragma mark - start notifier
-+ (void)startNotifierWithAPIKey:(NSString *)key environmentName:(NSString *)name {
++ (HTNotifier *)startNotifierWithAPIKey:(NSString *)key environmentName:(NSString *)name {
 	if (sharedNotifier == nil) {
 		
 		// validate
-		if (key == nil || [key length] == 0) {
-			HTLog(@"The provided API key is not valid");
-			return;
+		if (![key length]) {
+			HTLog(@"The API key must not be blank");
+			return nil;
 		}
-		if (name == nil || [name length] == 0) {
-			HTLog(@"The provided environment name is not valid");
-			return;
+		if (![name length]) {
+			HTLog(@"The environment name must not be blank");
+			return nil;
 		}
         
         // create
@@ -398,7 +394,11 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
             HTLog(@"Notifier %@ ready to catch errors", HTNotifierVersion);
             HTLog(@"Environment \"%@\"", envName);
         }
+        else {
+            HTLog(@"Unable to create crash notifier");
+        }
 	}
+    return sharedNotifier;
 }
 
 #pragma mark - singleton methods
@@ -425,7 +425,7 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 - (NSUInteger)retainCount {
 	return NSUIntegerMax;
 }
-- (void)release {
+- (oneway void)release {
 	// do nothing
 }
 - (id)autorelease {
@@ -442,9 +442,10 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
     // release information
     HTReleaseNoticeInfo();
 	if (reachability != NULL) { CFRelease(reachability);reachability = NULL; }
-	[_apiKey release];_apiKey = nil;
-	[_environmentName release];_environmentName = nil;
-	[_environmentInfo release];_environmentInfo = nil;
+    self.apiKey = nil;
+    self.environmentName = nil;
+	[__environmentInfo release];
+    __environmentInfo = nil;
     
     // super
 	[super dealloc];
@@ -453,23 +454,84 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 
 #pragma mark - test mechanism
 - (void)writeTestNotice {
-    NSString *testPath = [HTNoticesDirectory() stringByAppendingPathComponent:@"TEST"];
-    testPath = [testPath stringByAppendingPathExtension:HTNoticePathExtension];
-	if ([[NSFileManager defaultManager] fileExistsAtPath:testPath]) { return; }
-	@try {
+    @try {
         NSArray *array = [NSArray array];
         [array objectAtIndex:NSUIntegerMax];
     }
-	@catch (NSException *e) { ht_handle_exception(e); }
-	NSString *noticePath = [NSString stringWithUTF8String:ht_notice_info.notice_path];
-	[[NSFileManager defaultManager] moveItemAtPath:noticePath toPath:testPath error:nil];
+	@catch (NSException *e) {
+        [self logException:e];
+    }
+}
+
+#pragma mark - log exception
+- (void)logException:(NSException *)exception {
+    @synchronized(self) {
+        
+        // open file
+        NSString *name = [[NSProcessInfo processInfo] globallyUniqueString];
+        NSString *path = ABNotifierPathForNewNoticeWithName(name);
+        int fd = HTOpenFile(HTExceptionNoticeType, [path UTF8String]);
+        
+        // write file
+        if (fd > -1) {
+            @try {
+                
+                // crash info
+                NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:5];
+                
+                // addresses
+                NSArray *addresses = [exception callStackReturnAddresses];
+                NSArray *symbols = HTCallStackSymbolsFromReturnAddresses(addresses);
+                [dictionary setObject:symbols forKey:@"call stack"];
+                
+                // exception name and reason
+                [dictionary setObject:[exception name] forKey:@"exception name"];
+                [dictionary setObject:[exception reason] forKey:@"exception reason"];
+                
+#if TARGET_OS_IPHONE
+                
+                // view controller
+                NSString *viewController = HTCurrentViewController();
+                if (viewController != nil) {
+                    [dictionary setObject:viewController forKey:@"view controller"];
+                }
+                
+#endif
+                
+                // environment info
+                [self setEnvironmentValue:[[exception userInfo] description] forKey:@"Exception"];
+                [dictionary setObject:self.environmentInfo forKey:@"environment info"];
+                
+                // write data
+                NSData *data = [NSKeyedArchiver archivedDataWithRootObject:dictionary];
+                NSUInteger length = [data length];
+                write(fd, &length, sizeof(unsigned long));
+                write(fd, [data bytes], length);
+                
+                // notify delegate on main thread
+                if ([self.delegate respondsToSelector:@selector(notifierDidLogException:)]) {
+                    [self.delegate
+                     performSelectorOnMainThread:@selector(notifierDidLogException:)
+                     withObject:exception
+                     waitUntilDone:YES];
+                }
+                
+            }
+            @catch (NSException *exception) {
+                HTLog(@"Encountered an exception while logging an exception");
+            }
+            @finally {
+                close(fd);
+            }
+        }
+    }
 }
 
 #pragma mark - environment information accessors
 - (void)setEnvironmentValue:(NSString *)valueOrNil forKey:(NSString *)key {
-    if (valueOrNil == nil) { [_environmentInfo removeObjectForKey:key]; }
-    else { [_environmentInfo setObject:valueOrNil forKey:key]; }
-    NSData *environmentData = [NSKeyedArchiver archivedDataWithRootObject:_environmentInfo];
+    if (valueOrNil == nil) { [__environmentInfo removeObjectForKey:key]; }
+    else { [__environmentInfo setObject:valueOrNil forKey:key]; }
+    NSData *environmentData = [NSKeyedArchiver archivedDataWithRootObject:__environmentInfo];
     NSUInteger length = [environmentData length];
     free(ht_notice_info.env_info);
     ht_notice_info.env_info = malloc(length);
@@ -477,14 +539,14 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
     [environmentData getBytes:ht_notice_info.env_info length:length];
 }
 - (NSString *)environmentValueForKey:(NSString *)key {
-    return [_environmentInfo objectForKey:key];
+    return [self.environmentInfo objectForKey:key];
 }
 
 #pragma mark - post notices
 - (BOOL)postNotices {
     BOOL value = [self isHoptoadReachable];
     if (value) {
-        NSArray *notices = HTNotices();
+        NSArray *notices = ABNotifierAllNotices();
         if ([notices count]) {
             if ([[NSUserDefaults standardUserDefaults] boolForKey:HTNotifierAlwaysSendKey]) {
                 [self performSelectorInBackground:@selector(postNoticesWithPaths:) withObject:notices];
@@ -505,7 +567,7 @@ NSString * const HTNotifierAlwaysSendKey = @"AlwaysSendCrashReports";
 	}
 }
 - (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex {
-    NSArray *notices = HTNotices();
+    NSArray *notices = ABNotifierAllNotices();
 	if (buttonIndex == alertView.cancelButtonIndex) {
 		for (NSString *notice in notices) {
 			[[NSFileManager defaultManager]

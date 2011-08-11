@@ -33,7 +33,7 @@
 #import "HTNotifier.h"
 #import "HTNotice.h"
 
-NSString *HTNotifierDirectoryName = @"Hoptoad Notices";
+static NSString * const ABNotifierNoticeDirectoryName = @"Hoptoad Notices";
 
 // handled signals
 int ht_signals_count = 6;
@@ -49,12 +49,11 @@ int ht_signals[] = {
 // internal function prototypes
 void ht_handle_signal(int, siginfo_t *, void *);
 void ht_handle_exception(NSException *);
-int ht_open_file(int);
 
 #pragma mark crash time methods
 void ht_handle_signal(int signal, siginfo_t *info, void *context) {
     HTStopSignalHandler();
-    int fd = ht_open_file(HTSignalNoticeType);
+    int fd = HTOpenFile(HTSignalNoticeType, ht_notice_info.notice_path);
     if (fd > -1) {
 		
 		// signal
@@ -79,53 +78,12 @@ void ht_handle_signal(int signal, siginfo_t *info, void *context) {
 }
 void ht_handle_exception(NSException *exception) {
     HTStopHandlers();
-    int fd = ht_open_file(HTExceptionNoticeType);
-    if (fd > -1) {
-        
-		// crash info
-		NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:5];
-		
-		// addresses
-        NSArray *addresses = [exception callStackReturnAddresses];
-		NSArray *symbols = HTCallStackSymbolsFromReturnAddresses(addresses);
-		[dictionary setObject:symbols forKey:@"call stack"];
-		
-		// exception name and reason
-		[dictionary setObject:[exception name] forKey:@"exception name"];
-		[dictionary setObject:[exception reason] forKey:@"exception reason"];
-		
-#if TARGET_OS_IPHONE
-		
-		// view controller
-		NSString *viewController = HTCurrentViewController();
-		if (viewController != nil) {
-			[dictionary setObject:viewController forKey:@"view controller"];
-		}
-		
-#endif
-		
-		// environment info
-        [[HTNotifier sharedNotifier] setEnvironmentValue:[[exception userInfo] description] forKey:@"Exception"];
-		NSDictionary *environmentInfo = [[HTNotifier sharedNotifier] environmentInfo];
-		[dictionary setObject:environmentInfo forKey:@"environment info"];
-		
-        // write data
-        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:dictionary];
-        NSUInteger length = [data length];
-        write(fd, &length, sizeof(unsigned long));
-        write(fd, [data bytes], length);
-        
-        // close file
-        close(fd);
-        
-    }
-	id<HTNotifierDelegate> delegate = [[HTNotifier sharedNotifier] delegate];
-	if ([delegate respondsToSelector:@selector(notifierDidHandleException:)]) {
-		[delegate notifierDidHandleException:exception];
-	}
+    [[HTNotifier sharedNotifier] logException:exception];
 }
-int ht_open_file(int type) {
-    int fd = open(ht_notice_info.notice_path, O_WRONLY | O_CREAT, S_IREAD | S_IWRITE);
+
+#pragma mark - open notice file
+int HTOpenFile(int type, const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT, S_IREAD | S_IWRITE);
     if (fd > -1) {
         write(fd, &HTNoticeFileVersion, sizeof(int));
         write(fd, &type, sizeof(int));
@@ -154,14 +112,14 @@ int ht_open_file(int type) {
 }
 
 #pragma mark - modify handler state
-void HTStartHandlers() {
+void HTStartHandlers(void) {
     HTStartExceptionHandler();
     HTStartSignalHandler();
 }
-void HTStartExceptionHandler() {
+void HTStartExceptionHandler(void) {
     NSSetUncaughtExceptionHandler(&ht_handle_exception);
 }
-void HTStartSignalHandler() {
+void HTStartSignalHandler(void) {
 	for (NSUInteger i = 0; i < ht_signals_count; i++) {
 		int signal = ht_signals[i];
 		struct sigaction action;
@@ -173,14 +131,14 @@ void HTStartSignalHandler() {
 		}
 	}
 }
-void HTStopHandlers() {
+void HTStopHandlers(void) {
     HTStopExceptionHandler();
     HTStopSignalHandler();
 }
-void HTStopExceptionHandler() {
+void HTStopExceptionHandler(void) {
     NSSetUncaughtExceptionHandler(NULL);
 }
-void HTStopSignalHandler() {
+void HTStopSignalHandler(void) {
 	for (NSUInteger i = 0; i < ht_signals_count; i++) {
 		int signal = ht_signals[i];
 		struct sigaction action;
@@ -194,10 +152,10 @@ void HTStopSignalHandler() {
 id HTInfoPlistValueForKey(NSString *key) {
 	return [[[NSBundle mainBundle] infoDictionary] objectForKey:key];
 }
-NSString *HTExecutableName() {
+NSString *HTExecutableName(void) {
 	return HTInfoPlistValueForKey(@"CFBundleExecutable");
 }
-NSString *HTApplicationVersion() {
+NSString *HTApplicationVersion(void) {
 	NSString *bundleVersion = HTBundleVersion();
 	NSString *versionString = HTInfoPlistValueForKey(@"CFBundleShortVersionString");
 	if (bundleVersion != nil && versionString != nil) {
@@ -207,10 +165,10 @@ NSString *HTApplicationVersion() {
 	else if (versionString != nil) { return versionString; }
 	else { return nil; }
 }
-NSString *HTBundleVersion() {
+NSString *HTBundleVersion(void) {
     return HTInfoPlistValueForKey(@"CFBundleVersion");
 }
-NSString *HTApplicationName() {
+NSString *HTApplicationName(void) {
 	NSString *displayName = HTInfoPlistValueForKey(@"CFBundleDisplayName");
 	NSString *bundleName = HTInfoPlistValueForKey(@"CFBundleName");
 	NSString *identifier = HTInfoPlistValueForKey(@"CFBundleIdentifier");
@@ -221,14 +179,14 @@ NSString *HTApplicationName() {
 }
 
 #pragma mark - platform accessors
-NSString *HTOperatingSystemVersion() {
+NSString *HTOperatingSystemVersion(void) {
 #if TARGET_IPHONE_SIMULATOR
 	return [[UIDevice currentDevice] systemVersion];
 #else
 	return [[NSProcessInfo processInfo] operatingSystemVersionString];
 #endif
 }
-NSString *HTMachine() {
+NSString *HTMachine(void) {
 #if TARGET_IPHONE_SIMULATOR
 	return @"iPhone Simulator";
 #else
@@ -246,7 +204,7 @@ NSString *HTMachine() {
     
 #endif
 }
-NSString *HTPlatform() {
+NSString *HTPlatform(void) {
 #if TARGET_IPHONE_SIMULATOR
 	return @"iPhone Simulator";
 #else
@@ -266,9 +224,9 @@ NSString *HTPlatform() {
     else if ([machine isEqualToString:@"iPad2,3"]) { return @"iPad 2 (CDMA)"; }
 	// ipod
 	else if ([machine isEqualToString:@"iPod1,1"]) { return @"iPod Touch"; }
-	else if ([machine isEqualToString:@"iPod2,1"]) { return @"iPod Touch 2nd Gen"; }
-	else if ([machine isEqualToString:@"iPod3,1"]) { return @"iPod Touch 3rd Gen"; }
-	else if ([machine isEqualToString:@"iPod4,1"]) { return @"iPod Touch 4th Gen"; }
+	else if ([machine isEqualToString:@"iPod2,1"]) { return @"iPod Touch (2nd generation)"; }
+	else if ([machine isEqualToString:@"iPod3,1"]) { return @"iPod Touch (3rd generation)"; }
+	else if ([machine isEqualToString:@"iPod4,1"]) { return @"iPod Touch (4th generation)"; }
 	// unknown
 	else { return machine; }
 #else
@@ -279,17 +237,15 @@ NSString *HTPlatform() {
 }
 
 #pragma mark - init notice info
-void HTInitNoticeInfo() {
+void HTInitNoticeInfo(void) {
     
     NSString *value;
     const char *value_str;
     NSUInteger length;
     
     // exception file name
-    NSString *directory = HTNoticesDirectory();
-    NSString *fileName = [NSString stringWithFormat:@"%d", time(NULL)];
-    value = [directory stringByAppendingPathComponent:fileName];
-    value = [value stringByAppendingPathExtension:HTNoticePathExtension];
+    NSString *name = [[NSProcessInfo processInfo] globallyUniqueString];
+    value = ABNotifierPathForNewNoticeWithName(name);
     value_str = [value UTF8String];
     length = (strlen(value_str) + 1);
     ht_notice_info.notice_path = malloc(length);
@@ -351,7 +307,7 @@ void HTInitNoticeInfo() {
     }
     
 }
-void HTReleaseNoticeInfo() {
+void HTReleaseNoticeInfo(void) {
     free((void *)ht_notice_info.notice_path);
     ht_notice_info.notice_path = NULL;
     free((void *)ht_notice_info.os_version);
@@ -375,28 +331,32 @@ void HTReleaseNoticeInfo() {
 }
 
 #pragma mark - notice information on disk
-NSString * HTNoticesDirectory() {
+NSString *ABNotifierPathForNewNoticeWithName(NSString *name) {
+    NSString *path = ABNotifierPathForNoticesDirectory();
+    path = [path stringByAppendingPathComponent:name];
+    return [path stringByAppendingPathExtension:ABNotifierNoticePathExtension];
+}
+NSString *ABNotifierPathForNoticesDirectory() {
 #if TARGET_OS_IPHONE
 	NSArray *folders = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES);
 	NSString *path = [folders objectAtIndex:0];
 	if ([folders count] == 0) { path = NSTemporaryDirectory(); }
-	return [path stringByAppendingPathComponent:HTNotifierDirectoryName];
+	return [path stringByAppendingPathComponent:ABNotifierNoticePathExtension];
 #else
 	NSArray *folders = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
 	NSString *path = [folders objectAtIndex:0];
 	if ([folders count] == 0) { path = NSTemporaryDirectory(); }
 	path = [path stringByAppendingPathComponent:HTApplicationName()];
-	return [path stringByAppendingPathComponent:HTNotifierDirectoryName];
+	return [path stringByAppendingPathComponent:ABNotifierNoticePathExtension];
 #endif
 }
-NSArray * HTNotices() {
-	NSString *directory = HTNoticesDirectory();
-	NSArray *directoryContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:nil];
+NSArray *ABNotifierAllNotices(void) {
+    NSString *path = ABNotifierPathForNoticesDirectory();
+	NSArray *directoryContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:nil];
 	NSMutableArray *crashes = [NSMutableArray arrayWithCapacity:[directoryContents count]];
 	for (NSString *file in directoryContents) {
-        NSString *ext = [file pathExtension];
-		if ([ext isEqualToString:HTNoticePathExtension]) {
-			NSString *crashPath = [directory stringByAppendingPathComponent:file];
+		if ([[file pathExtension] isEqualToString:ABNotifierNoticePathExtension]) {
+			NSString *crashPath = [path stringByAppendingPathComponent:file];
 			[crashes addObject:crashPath];
 		}
 	}
@@ -463,7 +423,7 @@ NSString * HTStringByReplacingHoptoadVariablesInString(NSString *string) {
 
 #pragma mark - get view controller
 #if TARGET_OS_IPHONE
-NSString * HTCurrentViewController() {
+NSString * HTCurrentViewController(void) {
 	// view controller to inspect
 	UIViewController *rootController = nil;
 	
